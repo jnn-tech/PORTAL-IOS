@@ -1,0 +1,130 @@
+import Foundation
+
+/// Every backend endpoint the iOS app uses — the same paths the Android app
+/// (core/Api.kt) and web app (client/src/services/api.js) call. Every rule
+/// (roles, scope, ownership) is enforced by the server.
+public enum API {
+    // MARK: Account
+    public static func me() -> Endpoint<User> { Endpoint(.get, "/auth/me") }
+
+    // MARK: Terms and Conditions / Privacy Policy
+    /// Public: readable signed in or out (no token, no refresh).
+    public static func legalPolicy(_ policy: Legal.Policy) -> Endpoint<PolicyDocument> {
+        Endpoint(.get, "/legal/policies/\(policy.rawValue)", authenticated: false)
+    }
+
+    // MARK: Attendance
+    /// `semester`: only that semester's subjects (nil = every semester).
+    public static func myAttendance(range: AttendanceRange, semester: Int? = nil) -> Endpoint<AttendanceSummary> {
+        Endpoint(.get, "/attendance/my", query: ["range": range.rawValue, "semester": semester.map(String.init)])
+    }
+
+    public static func attendanceRecords(page: Int, limit: Int = 30, semester: Int? = nil) -> Endpoint<AttendanceRecordsPage> {
+        Endpoint(.get, "/attendance/records", query: ["page": String(page), "limit": String(limit), "semester": semester.map(String.init)])
+    }
+
+    // MARK: Study materials
+    /// Every material the account may read; each argument narrows it (nil = all).
+    public static func studyMaterials(semester: Int?, subjectId: String?, category: String?) -> Endpoint<StudyMaterialsPage> {
+        Endpoint(.get, "/study-materials", query: [
+            "limit": "50", "semester": semester.map(String.init), "subject": subjectId, "category": category,
+        ])
+    }
+
+    public static func studyMaterialFilters() -> Endpoint<StudyMaterialFilters> { Endpoint(.get, "/study-materials/filters") }
+
+    /// Faculty only: the classes they are currently assigned to teach.
+    public static func myTeachingAssignments() -> Endpoint<[TeachingAssignment]> { Endpoint(.get, "/study-materials/my-assignments") }
+
+    // MARK: Timetable & exams
+    public static func timetable() -> Endpoint<TimetableResponse> { Endpoint(.get, "/timetable") }
+    public static func currentClass() -> Endpoint<CurrentClassResponse> { Endpoint(.get, "/timetable/current") }
+    public static func exams() -> Endpoint<ExamsResponse> { Endpoint(.get, "/exams") }
+
+    // MARK: Complaints
+    public static func complaints(page: Int) -> Endpoint<ComplaintsPage> {
+        Endpoint(.get, "/complaints", query: ["page": String(page), "limit": "20"])
+    }
+
+    public static func createComplaint(_ complaint: NewComplaint) -> Endpoint<EmptyResponse> {
+        Endpoint(.post, "/complaints", body: complaint)
+    }
+
+    public static func cancelComplaint(id: String) -> Endpoint<EmptyResponse> {
+        Endpoint(.patch, "/complaints/\(id)/cancel")
+    }
+
+    // MARK: Notifications
+    public static func notifications(page: Int) -> Endpoint<NotificationsPage> {
+        Endpoint(.get, "/notifications", query: ["page": String(page), "limit": "20"])
+    }
+
+    public static func markNotificationRead(id: String) -> Endpoint<EmptyResponse> { Endpoint(.patch, "/notifications/\(id)/read") }
+    public static func markAllNotificationsRead() -> Endpoint<EmptyResponse> { Endpoint(.patch, "/notifications/read-all") }
+    public static func notificationPreferences() -> Endpoint<NotificationPreferences> { Endpoint(.get, "/notifications/preferences") }
+
+    public static func updateNotificationPreferences(disabled: [String], reminderMinutes: Int) -> Endpoint<NotificationPreferences> {
+        struct Body: Encodable, Sendable { let disabled: [String]; let reminderMinutes: Int }
+        return Endpoint(.put, "/notifications/preferences", body: Body(disabled: disabled, reminderMinutes: reminderMinutes))
+    }
+
+    // MARK: Chat
+    public static func conversations(search: String? = nil) -> Endpoint<[Conversation]> {
+        Endpoint(.get, "/chat/conversations", query: ["search": search?.isEmpty == false ? search : nil])
+    }
+
+    public static func messages(conversationId: String, before: Date? = nil) -> Endpoint<MessagesPage> {
+        Endpoint(.get, "/chat/conversations/\(conversationId)/messages", query: ["before": before.map(VEXONJSON.formatISO)])
+    }
+
+    public static func sendMessage(conversationId: String, _ message: NewChatMessage) -> Endpoint<EmptyResponse> {
+        Endpoint(.post, "/chat/conversations/\(conversationId)/messages", body: message)
+    }
+
+    public static func markConversationRead(id: String) -> Endpoint<EmptyResponse> { Endpoint(.patch, "/chat/conversations/\(id)/read") }
+
+    // MARK: Transport
+    public static func transportConfig() -> Endpoint<TransportConfig> { Endpoint(.get, "/transport/config") }
+    public static func buses() -> Endpoint<BusList> { Endpoint(.get, "/transport/buses") }
+
+    public static func bus(id: String, stopId: String?) -> Endpoint<BusDetail> {
+        Endpoint(.get, "/transport/buses/\(id)", query: ["stopId": stopId])
+    }
+
+    public static func transportSearch(_ q: String) -> Endpoint<TransportSearchResult> {
+        Endpoint(.get, "/transport/search", query: ["q": String(q.prefix(60))])
+    }
+
+    public static func transportMine() -> Endpoint<TransportMine> { Endpoint(.get, "/transport/me") }
+
+    /// `direction`: towards_college | towards_home (nil → the server records towards_college, marked assumed).
+    public static func startTrip(busId: String, direction: String? = nil) -> Endpoint<StartTripResponse> {
+        struct Body: Encodable, Sendable { let busId: String; let direction: String? }
+        return Endpoint(.post, "/transport/trips", body: Body(busId: busId, direction: direction))
+    }
+
+    /// Journey history. `range`: day | week | month | all; `direction`/`status` nil = any
+    /// (`status` "interrupted" = stopped or timed out before the final stop).
+    public static func transportHistory(range: String, direction: String?, status: String?, page: Int) -> Endpoint<HistoryTripList> {
+        Endpoint(.get, "/transport/history/trips", query: ["range": range, "direction": direction, "status": status, "page": String(page), "limit": "20"])
+    }
+
+    public static func transportHistoryTrip(id: String) -> Endpoint<HistoryTripDetail> {
+        Endpoint(.get, "/transport/history/trips/\(id)")
+    }
+
+    /// Correct the direction of your active trip before any stop is recorded.
+    public static func setTripDirection(tripId: String, direction: String) -> Endpoint<EmptyResponse> {
+        struct Body: Encodable, Sendable { let direction: String }
+        return Endpoint(.patch, "/transport/trips/\(tripId)/direction", body: Body(direction: direction))
+    }
+
+    public static func stopTrip(id: String) -> Endpoint<EmptyResponse> {
+        struct Body: Encodable, Sendable { let reason: String }
+        return Endpoint(.post, "/transport/trips/\(id)/stop", body: Body(reason: "completed"))
+    }
+
+    public static func postTripLocations(tripId: String, fixes: [OutgoingFix]) -> Endpoint<TripLocationsResult> {
+        Endpoint(.post, "/transport/trips/\(tripId)/locations", body: TripLocationsBody(fixes: fixes))
+    }
+}
